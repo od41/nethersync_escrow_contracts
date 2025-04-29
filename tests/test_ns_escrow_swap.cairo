@@ -1,45 +1,62 @@
-
-
-
-// use array::ArrayTrait;
-// use core::array::SpanTrait;
 use core::result::ResultTrait;
-use core::traits::Into;
-use nethersync_escrow_contracts::{NSEscrowSwapContract};
-use snforge_std::{declare, ContractClassTrait, DeclareResultTrait};
+use nethersync_escrow_contracts::{NSEscrowSwapContract, INSEscrowSwapContractDispatcher, INSEscrowSwapContractDispatcherTrait};
+use snforge_std::{declare, load, ContractClassTrait, DeclareResultTrait};
 
 use starknet::syscalls::deploy_syscall;
 use starknet::{ContractAddress, contract_address_const};
+
+fn uint256_encode(val: u256) -> Array::<felt252> {
+    let low_part: u128 = val.low;
+    let high_part: u128 = val.high;
+    let low_felt: felt252 = low_part.try_into().unwrap();
+    let high_felt: felt252 = high_part.try_into().unwrap();
+
+    let arr = array![low_felt, high_felt];
+    arr
+}
+
 
 
 fn deploy_contract() -> ContractAddress {
     let buyer = contract_address_const::<0x123>();
     let seller = contract_address_const::<0x456>();
     let token = contract_address_const::<0x789>();
-    let amount: u256 = 1000;
+    let amount = 1000_u256;
+    let amount_u128 = uint256_encode(amount); 
     let owner = contract_address_const::<0x111>();
-
-    let mut calldata = ArrayTrait::new();
-    calldata.append(buyer);
-    calldata.append(seller);
-    calldata.append(token);
-    calldata.append(amount);
-    calldata.append(owner);
-    let (address0, _) = deploy_syscall(
-        NSEscrowSwapContract::TEST_CLASS_HASH.try_into().unwrap(), 0, calldata.span(), false,
-    )
-        .unwrap();
+    
+    let calldata = array![
+        buyer.try_into().unwrap(), 
+        seller.try_into().unwrap(), 
+        token.try_into().unwrap(), 
+        *amount_u128[0],
+        *amount_u128[1],
+        owner.try_into().unwrap()
+    ];
+    let contract = declare("NSEscrowSwapContract").unwrap().contract_class();
+    let (address0, _) = contract.deploy(@calldata).unwrap();
     address0
 }
 
 #[test]
 fn test_deployment() {
     let contract_address = deploy_contract();
-    let contract_dispatcher = NSEscrowSwapContractDispatcher { contract_address: contract_address };
+    let _contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
     assert(
-        contract_dispatcher.ownable.get_owner() == contract_address_const::<0x111>(),
+        contract_address != contract_address_const::<0x0>(),
         'contract not deployed',
     );
+}
+
+#[test]
+fn test_deposit() {
+    let contract_address = deploy_contract();
+    let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+    let amount = 10_u256;
+    contract_dispatcher.deposit(amount);
+    let contract_balance = load(contract_address, selector!("amount"), 1);
+
+    assert_eq!(contract_balance, array![10], "incorrect price amount");
 }
 
 

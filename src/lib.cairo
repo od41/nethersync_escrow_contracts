@@ -87,7 +87,10 @@ pub mod NSEscrowSwapContract {
             self.is_completed.write(true);
         }
 
-        fn deposit(ref self: ContractState, amount: u256) {}
+        fn deposit(ref self: ContractState, amount: u256) {
+            assert(amount > 0, 'amount must be greater than 0');
+            self.amount.write(amount);
+        }
 
         fn reverse_deposit(ref self: ContractState) {
             assert!(self.is_completed.read(), "Transaction not completed");
