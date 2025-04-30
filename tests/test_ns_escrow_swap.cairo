@@ -60,30 +60,28 @@ fn test_deposit() {
 }
 
 
-// #[test]
-// fn test_withdraw() {
-//     let buyer = starknet::contract_address_const::<0x123>();
-//     let seller = starknet::contract_address_const::<0x456>();
-//     let token = starknet::contract_address_const::<0x789>();
-//     let amount: u256 = 1000;
-//     let owner = starknet::contract_address_const::<0x111>();
+#[test]
+fn test_withdraw() {
+    let contract_address = deploy_contract();
+    let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
-//     let contract_address = deploy_contract(buyer, seller, token, amount, owner);
+    let amount = 10_u256;
+    contract_dispatcher.deposit(amount);
 
-//     // Create a mock zk proof
-//     let mut zk_proof = array![1, 2, 3, 4];
+    // Create a mock zk proof
+    let mut zk_proof = array![1, 2, 3, 4];
 
-//     // Start pranking as seller
-//     snforge_std::start_prank(contract_address, seller);
+    // Start pranking as seller
+    snforge_std::start_prank(contract_address, seller);
 
-//     let dispatcher = INSEscrowSwapContractDispatcher { contract_address };
-//     dispatcher.withdraw(zk_proof.span());
+    let dispatcher = INSEscrowSwapContractDispatcher { contract_address };
+    dispatcher.withdraw(zk_proof.span());
 
-//     // Verify is_completed is true
-//     assert(dispatcher.is_completed(), 'withdrawal not completed');
+    // Verify is_completed is true
+    assert(dispatcher.is_completed(), 'withdrawal not completed');
 
-//     snforge_std::stop_prank(contract_address);
-// }
+    snforge_std::stop_prank(contract_address);
+}
 
 // #[test]
 // fn test_withdraw_already_completed() {
