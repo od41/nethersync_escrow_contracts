@@ -2,7 +2,7 @@
 // Compatible with OpenZeppelin Contracts for Cairo ^2.0.0-alpha.0
 
 #[derive(Drop, Serde, Copy, PartialEq, starknet::Store)]
-enum SwapStatus{
+pub enum SwapStatus{
     #[default]
     Pending,
     CredentialsVerified,

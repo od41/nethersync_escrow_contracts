@@ -1,5 +1,5 @@
 use core::result::ResultTrait;
-use nethersync_escrow_contracts::{NSEscrowSwapContract, INSEscrowSwapContractDispatcher, INSEscrowSwapContractDispatcherTrait};
+use nethersync_escrow_contracts::{NSEscrowSwapContract, INSEscrowSwapContractDispatcher, INSEscrowSwapContractDispatcherTrait, SwapStatus};
 use snforge_std::{declare, load, ContractClassTrait, DeclareResultTrait};
 
 use starknet::syscalls::deploy_syscall;
@@ -14,8 +14,6 @@ fn uint256_encode(val: u256) -> Array::<felt252> {
     let arr = array![low_felt, high_felt];
     arr
 }
-
-
 
 fn deploy_contract() -> ContractAddress {
     let buyer = contract_address_const::<0x123>();
@@ -49,117 +47,38 @@ fn test_deployment() {
 }
 
 #[test]
-fn test_deposit() {
+fn test_full_swap_flow_success() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
-    let amount = 10_u256;
+
+    // 1. Initial state check
+    assert(contract_dispatcher.swap_status() == SwapStatus::Pending, 'status not Pending');
+
+    // 2. Verify credentials
+    let zk_proof = array![1, 2, 3, 4]; // Mock valid proof
+    contract_dispatcher.verify_credentials(zk_proof.span());
+    assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsVerified, 'status not CredentialsVerified');
+
+    // 3. Deposit
+    let amount = 1000_u256;
     contract_dispatcher.deposit(amount);
+    assert(contract_dispatcher.swap_status() == SwapStatus::PaymentConfirmed, 'status not PaymentConfirmed');
+
+    // 4. Verify credentials shared
+    contract_dispatcher.verify_credentials_shared(zk_proof.span());
+    assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsShared, 'status not CredentialsShared');
+
+    // 5. Verify credentials changed
+    contract_dispatcher.verify_credentials_changed(zk_proof.span());
+    assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsChanged, 'status not CredentialsChanged');
+
+    // 6. Withdraw
+    contract_dispatcher.withdraw();
+    assert(contract_dispatcher.swap_status() == SwapStatus::Completed, 'status not Completed');
+    
+    // 7. Verify amount is zero after withdrawal
     let contract_balance = load(contract_address, selector!("amount"), 1);
-
-    assert_eq!(contract_balance, array![10], "incorrect price amount");
+    assert_eq!(contract_balance, array![0], "amount not zero after withdrawal");
 }
-
-
-#[test]
-fn test_withdraw() {
-    let contract_address = deploy_contract();
-    let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
-
-    let amount = 10_u256;
-    contract_dispatcher.deposit(amount);
-
-    // Create a mock zk proof
-    let mut zk_proof = array![1, 2, 3, 4];
-
-    // Start pranking as seller
-    snforge_std::start_prank(contract_address, seller);
-
-    let dispatcher = INSEscrowSwapContractDispatcher { contract_address };
-    dispatcher.withdraw(zk_proof.span());
-
-    // Verify is_completed is true
-    assert(dispatcher.is_completed(), 'withdrawal not completed');
-
-    snforge_std::stop_prank(contract_address);
-}
-
-// #[test]
-// fn test_withdraw_already_completed() {
-//     let buyer = starknet::contract_address_const::<0x123>();
-//     let seller = starknet::contract_address_const::<0x456>();
-//     let token = starknet::contract_address_const::<0x789>();
-//     let amount: u256 = 1000;
-//     let owner = starknet::contract_address_const::<0x111>();
-
-//     let contract_address = deploy_contract(buyer, seller, token, amount, owner);
-
-//     // Create a mock zk proof
-//     let mut zk_proof = array![1, 2, 3, 4];
-
-//     snforge_std::start_prank(contract_address, seller);
-
-//     let dispatcher = INSEscrowSwapContractDispatcher { contract_address };
-//     // First withdrawal
-//     dispatcher.withdraw(zk_proof.span());
-
-//     // Second withdrawal should fail
-//     match dispatcher.withdraw(zk_proof.span()) {
-//         Result::Ok(_) => panic_with_felt252('Should have failed'),
-//         Result::Err(data) => {
-//             assert(*data.at(0) == 'Transaction already completed', *data.at(0));
-//         },
-//     }
-
-//     snforge_std::stop_prank(contract_address);
-// }
-
-// #[test]
-// fn test_reverse_deposit() {
-//     let buyer = starknet::contract_address_const::<0x123>();
-//     let seller = starknet::contract_address_const::<0x456>();
-//     let token = starknet::contract_address_const::<0x789>();
-//     let amount: u256 = 1000;
-//     let owner = starknet::contract_address_const::<0x111>();
-
-//     let contract_address = deploy_contract(buyer, seller, token, amount, owner);
-
-//     let mut zk_proof = array![1, 2, 3, 4];
-
-//     // First complete the withdrawal
-//     snforge_std::start_prank(contract_address, seller);
-//     let dispatcher = INSEscrowSwapContractDispatcher { contract_address };
-//     dispatcher.withdraw(zk_proof.span());
-//     snforge_std::stop_prank(contract_address);
-
-//     // Then reverse the deposit
-//     snforge_std::start_prank(contract_address, buyer);
-//     dispatcher.reverse_deposit();
-//     assert(!dispatcher.is_completed(), 'reverse deposit failed');
-//     snforge_std::stop_prank(contract_address);
-// }
-
-// #[test]
-// fn test_reverse_deposit_not_completed() {
-//     let buyer = starknet::contract_address_const::<0x123>();
-//     let seller = starknet::contract_address_const::<0x456>();
-//     let token = starknet::contract_address_const::<0x789>();
-//     let amount: u256 = 1000;
-//     let owner = starknet::contract_address_const::<0x111>();
-
-//     let contract_address = deploy_contract(buyer, seller, token, amount, owner);
-
-//     snforge_std::start_prank(contract_address, buyer);
-//     let dispatcher = INSEscrowSwapContractDispatcher { contract_address };
-
-//     // Should fail as withdrawal hasn't happened
-//     match dispatcher.reverse_deposit() {
-//         Result::Ok(_) => panic_with_felt252('Should have failed'),
-//         Result::Err(data) => {
-//             assert(*data.at(0) == 'Transaction not completed', *data.at(0));
-//         },
-//     }
-
-//     snforge_std::stop_prank(contract_address);
-// }
 
 
