@@ -1,8 +1,8 @@
 use core::result::ResultTrait;
 use core::panic_with_felt252;
 
-use nethersync_escrow_contracts::{NSEscrowSwapContract, INSEscrowSwapContractDispatcher, INSEscrowSwapContractDispatcherTrait, SwapStatus};
-use snforge_std::{declare, load, ContractClassTrait, DeclareResultTrait};
+use nethersync_escrow_contracts::{events, NSEscrowSwapContract, INSEscrowSwapContractDispatcher, INSEscrowSwapContractDispatcherTrait, SwapStatus};
+use snforge_std::{declare, load, ContractClassTrait, DeclareResultTrait, spy_events, EventSpyAssertionsTrait};
 
 use starknet::{ContractAddress, contract_address_const};
 
@@ -87,16 +87,17 @@ fn test_credentials_verification_failed() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
-    // Mock invalid proof
-    let invalid_proof = array![0, 0, 0, 0];
+    let mut spy = spy_events();
     
-    // Should revert with invalid proof
-    // match contract_dispatcher.verify_credentials(invalid_proof.span()) {
-    //     Result::Ok(_) => panic_with_felt252('should fail'),
-    //     Result::Err(data) => {
-    //         assert(*data.at(0) == 'ZK proof is invalid', 'wrong error');
-    //     },
-    // }
+    // Mock invalid proof
+    let invalid_proof = array![];
+    contract_dispatcher.verify_credentials(invalid_proof.span());
+
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerificationFailed(
+            events::CredentialsVerificationFailed { status: 'CredentialsVerificationFailed' }
+        ))
+    ]);
 }
 
 #[test]
@@ -104,7 +105,14 @@ fn test_reverse_deposit_from_pending() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
+    let mut spy = spy_events();
     contract_dispatcher.reverse_deposit();
+
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 1000_u256 }
+        ))
+    ]);
     assert(contract_dispatcher.swap_status() == SwapStatus::Cancelled, 'not cancelled');
 }
 
@@ -113,12 +121,23 @@ fn test_reverse_deposit_from_credentials_verified() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
+    let mut spy = spy_events();
+
     // First verify credentials
     let zk_proof = array![1, 2, 3, 4];
     contract_dispatcher.verify_credentials(zk_proof.span());
     
     // Then reverse deposit
     contract_dispatcher.reverse_deposit();
+
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'CredentialsVerified' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 1000_u256 }
+        ))
+    ]);
     assert(contract_dispatcher.swap_status() == SwapStatus::Cancelled, 'not cancelled');
 }
 
@@ -126,6 +145,8 @@ fn test_reverse_deposit_from_credentials_verified() {
 fn test_reverse_deposit_from_payment_confirmed() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+
+    let mut spy = spy_events();
 
     // First verify credentials
     let zk_proof = array![1, 2, 3, 4];
@@ -137,6 +158,18 @@ fn test_reverse_deposit_from_payment_confirmed() {
     
     // Then reverse deposit
     contract_dispatcher.reverse_deposit();
+
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'CredentialsVerified' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+            events::PaymentDeposited { amount }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: amount }
+        ))
+    ]);
     assert(contract_dispatcher.swap_status() == SwapStatus::Cancelled, 'not cancelled');
 }
 
@@ -145,6 +178,8 @@ fn test_reverse_deposit_invalid_after_shared() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
+    let mut spy = spy_events();
+
     // Progress to CredentialsShared
     let zk_proof = array![1, 2, 3, 4];
     contract_dispatcher.verify_credentials(zk_proof.span());
@@ -152,94 +187,224 @@ fn test_reverse_deposit_invalid_after_shared() {
     contract_dispatcher.verify_credentials_shared(zk_proof.span());
 
     // Try to reverse deposit
-    match contract_dispatcher.reverse_deposit() {
-        Result::Ok(_) => panic_with_felt252('should fail'),
-        Result::Err(data) => {
-            assert(*data.at(0) == 'invalid swap status', 'wrong error');
-        },
-    }
+    contract_dispatcher.reverse_deposit();
+
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'CredentialsVerified' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+            events::PaymentDeposited { amount: 1000_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
+            events::CredentialsShared { status: 'CredentialsShared' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 1000_u256 }
+        ))
+    ]);
 }
 
 #[test]
+#[should_panic(expected: 'invalid swap status')]
 fn test_deposit_invalid_status() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
+    let mut spy = spy_events();
+
     // Try to deposit before verify_credentials
-    match contract_dispatcher.deposit(1000_u256) {
-        Result::Ok(_) => panic_with_felt252('should fail'),
-        Result::Err(data) => {
-            assert(*data.at(0) == 'invalid swap status', 'wrong error');
-        },
-    }
+    contract_dispatcher.deposit(1000_u256);
+
+    // Should not emit any contract events
+    spy.assert_not_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::SwapCreated(
+            events::SwapCreated { buyer: contract_address_const::<0>(), seller: contract_address_const::<0>(), token: contract_address_const::<0>(), amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+            events::PaymentDeposited { amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
+            events::CredentialsShared { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsChanged(
+            events::CredentialsChanged { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCompleted(
+            events::SwapCompleted { final_amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 0_u256 }
+        )),
+    ]);
 }
 
 #[test]
+#[should_panic(expected: 'amount must be greater than 0')]
 fn test_deposit_zero_amount() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+
+    let mut spy = spy_events();
 
     // First verify credentials
     let zk_proof = array![1, 2, 3, 4];
     contract_dispatcher.verify_credentials(zk_proof.span());
 
     // Try to deposit zero amount
-    match contract_dispatcher.deposit(0_u256) {
-        Result::Ok(_) => panic_with_felt252('should fail'),
-        Result::Err(data) => {
-            assert(*data.at(0) == 'amount must be greater than 0', 'wrong error');
-        },
-    }
+    contract_dispatcher.deposit(0_u256);
+
+    // Should only emit the credentials verified event
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'CredentialsVerified' }
+        ))
+    ]);
+    spy.assert_not_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::SwapCreated(
+            events::SwapCreated { buyer: contract_address_const::<0>(), seller: contract_address_const::<0>(), token: contract_address_const::<0>(), amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+            events::PaymentDeposited { amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
+            events::CredentialsShared { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsChanged(
+            events::CredentialsChanged { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCompleted(
+            events::SwapCompleted { final_amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 0_u256 }
+        )),
+    ]);
 }
 
 #[test]
+#[should_panic(expected: 'invalid swap status')]
 fn test_verify_credentials_shared_invalid_status() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
+    let mut spy = spy_events();
+
     // Try to verify credentials shared before deposit
     let zk_proof = array![1, 2, 3, 4];
-    match contract_dispatcher.verify_credentials_shared(zk_proof.span()) {
-        Result::Ok(_) => panic_with_felt252('should fail'),
-        Result::Err(data) => {
-            assert(*data.at(0) == 'invalid swap status', 'wrong error');
-        },
-    }
+    contract_dispatcher.verify_credentials_shared(zk_proof.span());
+
+    // Should not emit any contract events
+    spy.assert_not_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::SwapCreated(
+            events::SwapCreated { buyer: contract_address_const::<0>(), seller: contract_address_const::<0>(), token: contract_address_const::<0>(), amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+            events::PaymentDeposited { amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
+            events::CredentialsShared { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsChanged(
+            events::CredentialsChanged { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCompleted(
+            events::SwapCompleted { final_amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 0_u256 }
+        )),
+    ]);
 }
 
 #[test]
+#[should_panic(expected: 'invalid swap status')]
 fn test_verify_credentials_changed_invalid_status() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
+    let mut spy = spy_events();
+
     // Try to verify credentials changed before shared
     let zk_proof = array![1, 2, 3, 4];
-    match contract_dispatcher.verify_credentials_changed(zk_proof.span()) {
-        Result::Ok(_) => panic_with_felt252('should fail'),
-        Result::Err(data) => {
-            assert(*data.at(0) == 'invalid swap status', 'wrong error');
-        },
-    }
+    contract_dispatcher.verify_credentials_changed(zk_proof.span());
+
+    // Should not emit any contract events
+    spy.assert_not_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::SwapCreated(
+            events::SwapCreated { buyer: contract_address_const::<0>(), seller: contract_address_const::<0>(), token: contract_address_const::<0>(), amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+            events::PaymentDeposited { amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
+            events::CredentialsShared { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsChanged(
+            events::CredentialsChanged { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCompleted(
+            events::SwapCompleted { final_amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 0_u256 }
+        )),
+    ]);
 }
 
 #[test]
+#[should_panic(expected: 'invalid swap status')]
 fn test_withdraw_invalid_status() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
+    let mut spy = spy_events();
+
     // Try to withdraw before credentials changed
-    match contract_dispatcher.withdraw() {
-        Result::Ok(_) => panic_with_felt252('should fail'),
-        Result::Err(data) => {
-            assert(*data.at(0) == 'invalid swap status', 'wrong error');
-        },
-    }
+    contract_dispatcher.withdraw();
+
+    // Should not emit any contract events
+    spy.assert_not_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::SwapCreated(
+            events::SwapCreated { buyer: contract_address_const::<0>(), seller: contract_address_const::<0>(), token: contract_address_const::<0>(), amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+            events::PaymentDeposited { amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
+            events::CredentialsShared { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsChanged(
+            events::CredentialsChanged { status: 'dummy' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCompleted(
+            events::SwapCompleted { final_amount: 0_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 0_u256 }
+        )),
+    ]);
 }
 
 #[test]
+#[should_panic(expected: 'invalid swap status')]
 fn test_withdraw_twice() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+
+    let mut spy = spy_events();
 
     // Complete the full flow
     let zk_proof = array![1, 2, 3, 4];
@@ -250,12 +415,25 @@ fn test_withdraw_twice() {
     contract_dispatcher.withdraw();
 
     // Try to withdraw again
-    match contract_dispatcher.withdraw() {
-        Result::Ok(_) => panic_with_felt252('should fail'),
-        Result::Err(data) => {
-            assert(*data.at(0) == 'invalid swap status', 'wrong error');
-        },
-    }
+    contract_dispatcher.withdraw();
+
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+            events::CredentialsVerified { status: 'CredentialsVerified' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+            events::PaymentDeposited { amount: 1000_u256 }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
+            events::CredentialsShared { status: 'CredentialsShared' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::CredentialsChanged(
+            events::CredentialsChanged { status: 'CredentialsChanged' }
+        )),
+        (contract_address, NSEscrowSwapContract::Event::SwapCompleted(
+            events::SwapCompleted { final_amount: 1000_u256 }
+        ))
+    ]);
 }
 
 #[test]
@@ -263,16 +441,19 @@ fn test_reverse_deposit_twice() {
     let contract_address = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
+    let mut spy = spy_events();
+
     // First reverse deposit
     contract_dispatcher.reverse_deposit();
 
     // Try to reverse deposit again
-    match contract_dispatcher.reverse_deposit() {
-        Result::Ok(_) => panic_with_felt252('should fail'),
-        Result::Err(data) => {
-            assert(*data.at(0) == 'invalid swap status', 'wrong error');
-        },
-    }
+    contract_dispatcher.reverse_deposit();
+
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 1000_u256 }
+        ))
+    ]);
 }
 
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Compatible with OpenZeppelin Contracts for Cairo ^2.0.0-alpha.0
 
-mod events;
+pub mod events;
 
 #[derive(Drop, Serde, Copy, PartialEq, starknet::Store)]
 pub enum SwapStatus{
@@ -96,7 +96,7 @@ pub mod NSEscrowSwapContract {
 
     #[event]
     #[derive(Drop, starknet::Event)]
-    enum Event {
+    pub enum Event {
         #[flat]
         OwnableEvent: OwnableComponent::Event,
         #[flat]
@@ -108,6 +108,7 @@ pub mod NSEscrowSwapContract {
         CredentialsChanged: events::CredentialsChanged,
         SwapCompleted: events::SwapCompleted,
         SwapCancelled: events::SwapCancelled,
+        CredentialsVerificationFailed: events::CredentialsVerificationFailed,
     }
 
     #[constructor]
@@ -146,13 +147,14 @@ pub mod NSEscrowSwapContract {
                 | (current_status == SwapStatus::Pending ), 'invalid swap status' );
             // assert that zk_proof is valid
             let is_proof_valid = verify_zk_proof(zk_proof);
-            let new_status = if is_proof_valid { SwapStatus::CredentialsVerified } else { SwapStatus::CredentialsVerificationFailed };
+            if is_proof_valid { 
+                self.status.write(SwapStatus::CredentialsVerified);
+                self.emit(Event::CredentialsVerified(events::CredentialsVerified { status: 'CredentialsVerified' }));
+            } else {
+                self.status.write(SwapStatus::CredentialsVerificationFailed);
+                self.emit(Event::CredentialsVerificationFailed(events::CredentialsVerificationFailed { status: 'CredentialsVerificationFailed' }));
+            }
 
-            // set status to credentials verified
-            self.status.write(new_status);
-
-            // Emit CredentialsVerified event
-            self.emit(Event::CredentialsVerified(events::CredentialsVerified { status: 'CredentialsVerified' }));
         }
 
         fn deposit(ref self: ContractState, amount: u256) {
@@ -258,6 +260,9 @@ pub mod NSEscrowSwapContract {
 
     fn verify_zk_proof(zk_proof: Span<u8>) -> bool { 
         // TODO: Implement zk-proof verification logic here
+        if zk_proof.len() == 0 {
+            return false;
+        }
         true
     }
 }

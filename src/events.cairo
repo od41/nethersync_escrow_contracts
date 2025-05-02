@@ -14,6 +14,11 @@ pub struct CredentialsVerified {
 }
 
 #[derive(Copy, Drop, Debug, PartialEq, starknet::Event)]
+pub struct CredentialsVerificationFailed {
+    pub status: felt252,
+}
+
+#[derive(Copy, Drop, Debug, PartialEq, starknet::Event)]
 pub struct PaymentDeposited {
     pub amount: u256,
 }
