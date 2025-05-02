@@ -3,7 +3,7 @@
 
 mod events;
 
-#[derive(Drop, Serde, Copy, PartialEq, Into<felt252>, starknet::Store)]
+#[derive(Drop, Serde, Copy, PartialEq, starknet::Store)]
 pub enum SwapStatus{
     #[default]
     Pending,
@@ -152,7 +152,7 @@ pub mod NSEscrowSwapContract {
             self.status.write(new_status);
 
             // Emit CredentialsVerified event
-            self.emit(Event::CredentialsVerified(events::CredentialsVerified { status: new_status.into() }));
+            self.emit(Event::CredentialsVerified(events::CredentialsVerified { status: 'CredentialsVerified' }));
         }
 
         fn deposit(ref self: ContractState, amount: u256) {
@@ -185,9 +185,9 @@ pub mod NSEscrowSwapContract {
             self.status.write(SwapStatus::CredentialsShared);
 
             // Emit CredentialsShared event
-            self.emit(Event::CredentialsShared(events::CredentialsShared { status: SwapStatus::CredentialsShared.into() }));
+            self.emit(Event::CredentialsShared(events::CredentialsShared { status: 'CredentialsShared' }));
         }
-
+        
         fn verify_credentials_changed(ref self: ContractState, zk_proof: Span<u8>) {
             // assert that previous step is complete
             let current_status = self.swap_status();
@@ -201,7 +201,7 @@ pub mod NSEscrowSwapContract {
             self.status.write(SwapStatus::CredentialsChanged);            
 
             // Emit CredentialsChanged event
-            self.emit(Event::CredentialsChanged(events::CredentialsChanged { status: SwapStatus::CredentialsChanged.into() }));
+            self.emit(Event::CredentialsChanged(events::CredentialsChanged { status: 'CredentialsChanged' }));
         }
 
         fn withdraw(ref self: ContractState) {
