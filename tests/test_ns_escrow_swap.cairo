@@ -1,5 +1,4 @@
 use core::result::ResultTrait;
-use core::panic_with_felt252;
 
 use nethersync_escrow_contracts::{events, NSEscrowSwapContract, INSEscrowSwapContractDispatcher, INSEscrowSwapContractDispatcherTrait, SwapStatus};
 use snforge_std::{declare, load, ContractClassTrait, DeclareResultTrait, spy_events, EventSpyAssertionsTrait};
