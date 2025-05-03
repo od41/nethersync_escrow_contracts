@@ -16,6 +16,8 @@ pub enum SwapStatus{
     Cancelled,
 }
 
+pub const NS_FEE: u256 = 150; // 1.5%
+
 
 #[starknet::interface]
 pub trait INSEscrowSwapContract<TContractState> {
@@ -67,6 +69,9 @@ pub mod NSEscrowSwapContract {
     use openzeppelin_token::erc20::interface::{IERC20CamelDispatcherTrait, IERC20CamelDispatcher};
     use starknet::ContractAddress;
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
+    use starknet::get_caller_address;
+    use starknet::get_contract_address;
+    use core::panic_with_felt252;
 
     use super::INSEscrowSwapContract;
     use super::SwapStatus;
@@ -85,13 +90,11 @@ pub mod NSEscrowSwapContract {
         token: ContractAddress,
         amount: u256,
         status: SwapStatus,
-        is_completed: bool,
         #[substorage(v0)]
         ownable: OwnableComponent::Storage,
         #[substorage(v0)]
         erc20: ERC20Component::Storage,
-        // TODO: seller should set the price and payment asset
-
+        payment_erc_20: ContractAddress,
     }
 
     #[event]
@@ -119,18 +122,16 @@ pub mod NSEscrowSwapContract {
         token: ContractAddress,
         amount: u256,
         owner: ContractAddress,
+        payment_erc_20: ContractAddress,
     ) {
         self.buyer.write(buyer);
         self.seller.write(seller);
         self.token.write(token);
         self.amount.write(amount);
-        self.is_completed.write(false);
+        self.payment_erc_20.write(payment_erc_20);
 
         self.ownable.initializer(owner);
-        // TODO: Transfer tokens from buyer to this contract
-        // self.erc20.transfer_from(self.address(), buyer, amount);
-
-        // TODO: set swap status
+        
         self.status.write(SwapStatus::Pending);
 
         // Emit SwapCreated event
@@ -162,10 +163,24 @@ pub mod NSEscrowSwapContract {
             let current_status = self.swap_status();
             assert(current_status == SwapStatus::CredentialsVerified, 'invalid swap status' );
 
-            // TODO: seller should set the price and payment asset
             // assert that deposit amount is valid
             assert(amount > 0, 'amount must be greater than 0');
             self.amount.write(amount);
+
+            let amount_plus_fees = amount + get_fees(amount);
+
+            let payment_erc_20 = IERC20CamelDispatcher {
+                contract_address: self.payment_erc_20.read()
+            };
+            let caller = get_caller_address();
+            let contract = get_contract_address();
+
+            if !payment_erc_20.transferFrom(caller, contract, amount_plus_fees) {
+                panic_with_felt252('insufficient payment allowance');
+            }
+            if !payment_erc_20.approve(contract, amount_plus_fees) {
+                panic_with_felt252('approve failed');
+            }
 
             // set status to payment confirmed
             self.status.write(SwapStatus::PaymentConfirmed);
@@ -264,5 +279,10 @@ pub mod NSEscrowSwapContract {
             return false;
         }
         true
+    }
+
+    fn get_fees(amount: u256) -> u256 {
+        let fee_amount = (amount * NS_FEE) / 10000;
+        fee_amount
     }
 }
