@@ -2,6 +2,7 @@
 // Compatible with OpenZeppelin Contracts for Cairo ^2.0.0-alpha.0
 
 pub mod events;
+pub mod mock_usdt;
 
 #[derive(Drop, Serde, Copy, PartialEq, starknet::Store)]
 pub enum SwapStatus{
@@ -15,9 +16,6 @@ pub enum SwapStatus{
     Completed,
     Cancelled,
 }
-
-pub const NS_FEE: u256 = 150; // 1.5%
-
 
 #[starknet::interface]
 pub trait INSEscrowSwapContract<TContractState> {
@@ -33,39 +31,9 @@ pub trait INSEscrowSwapContract<TContractState> {
     fn swap_status(self: @TContractState) -> SwapStatus;
 }
 
-// let pyth = IPythDispatcher { contract_address: self.pyth_address.read() };
-// let strk_erc20 = IERC20CamelDispatcher {
-//     contract_address: self.strk_erc20_address.read()
-// };
-// let caller = get_caller_address();
-// let contract = get_contract_address();
-
-// // Get the fee required to update the Pyth price feeds.
-// let pyth_fee = pyth.get_update_fee(pyth_price_update.clone(), strk_erc20.contract_address);
-// if !strk_erc20.transferFrom(caller, contract, pyth_fee) {
-//     panic_with_felt252('insufficient allowance for fee');
-// }
-// if !strk_erc20.approve(pyth.contract_address, pyth_fee) {
-//     panic_with_felt252('approve failed');
-// }
-
-// // Submit a pyth_price_update to the Pyth contract to update the on-chain price.
-// pyth.update_price_feeds(pyth_price_update);
-
-// // Read the current price from a price feed.
-// // STRK/USD price feed ID
-// // The complete list of feed IDs is available at https://pyth.network/developers/price-feed-ids
-// let strk_usd_price_id =
-//     0x6a182399ff70ccf3e06024898942028204125a819e519a335ffa4579e66cd870;
-// let price = pyth
-//     .get_price_no_older_than(strk_usd_price_id, MAX_PRICE_AGE)
-//     .unwrap_with_felt252();
-// let _: u64 = price.price.try_into().unwrap(); // Price in u64
-
 #[starknet::contract]
 pub mod NSEscrowSwapContract {
     use openzeppelin_access::ownable::OwnableComponent;
-    use openzeppelin_token::erc20::{ERC20Component, ERC20HooksEmptyImpl};
     use openzeppelin_token::erc20::interface::{IERC20CamelDispatcherTrait, IERC20CamelDispatcher};
     use starknet::ContractAddress;
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
@@ -78,10 +46,11 @@ pub mod NSEscrowSwapContract {
     use super::events;
 
     component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
-    component!(path: ERC20Component, storage: erc20, event: ERC20Event);
 
     impl OwnableInternalImpl = OwnableComponent::InternalImpl<ContractState>;
-    impl ERC20InternalImpl = ERC20Component::InternalImpl<ContractState>;
+
+    const NS_FEE: u256 = 150; // 1.5%
+
 
     #[storage]
     struct Storage {
@@ -92,8 +61,6 @@ pub mod NSEscrowSwapContract {
         status: SwapStatus,
         #[substorage(v0)]
         ownable: OwnableComponent::Storage,
-        #[substorage(v0)]
-        erc20: ERC20Component::Storage,
         payment_erc_20: ContractAddress,
     }
 
@@ -102,8 +69,6 @@ pub mod NSEscrowSwapContract {
     pub enum Event {
         #[flat]
         OwnableEvent: OwnableComponent::Event,
-        #[flat]
-        ERC20Event: ERC20Component::Event,
         SwapCreated: events::SwapCreated,
         CredentialsVerified: events::CredentialsVerified,
         PaymentDeposited: events::PaymentDeposited,
@@ -164,8 +129,8 @@ pub mod NSEscrowSwapContract {
             assert(current_status == SwapStatus::CredentialsVerified, 'invalid swap status' );
 
             // assert that deposit amount is valid
-            assert(amount > 0, 'amount must be greater than 0');
-            self.amount.write(amount);
+            assert(amount > 0, 'amount must NOT be 0');
+            self.amount.write(amount);            
 
             let amount_plus_fees = amount + get_fees(amount);
 
@@ -175,11 +140,11 @@ pub mod NSEscrowSwapContract {
             let caller = get_caller_address();
             let contract = get_contract_address();
 
-            if !payment_erc_20.transferFrom(caller, contract, amount_plus_fees) {
-                panic_with_felt252('insufficient payment allowance');
-            }
             if !payment_erc_20.approve(contract, amount_plus_fees) {
                 panic_with_felt252('approve failed');
+            }
+            if !payment_erc_20.transferFrom(caller, contract, amount_plus_fees) {
+                panic_with_felt252('insufficient payment allowance');
             }
 
             // set status to payment confirmed
