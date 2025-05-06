@@ -188,17 +188,21 @@ pub mod NSEscrowSwapContract {
             let current_status = self.swap_status();
             assert(current_status == SwapStatus::CredentialsChanged, 'invalid swap status' );
 
-            // TODO: Transfer tokens to seller
             let payment_erc_20 = IERC20Dispatcher {
                 contract_address: self.payment_erc_20.read()
             };
+            
+            // assert that amount is valid
+            let contract_balance = payment_erc_20.balance_of(get_contract_address());
+            assert(contract_balance > 0, 'amount must NOT be 0');
+
+            // TODO: Transfer tokens to seller
+            
             let seller = self.seller.read();
             let amount = self.amount.read();
             if !payment_erc_20.transfer(seller, amount) {
                 panic_with_felt252('insufficient payment allowance');
             }
-            // TEMPORARY
-            // self.amount.write(0);
             
             // set status to completed
             self.status.write(SwapStatus::Completed); 

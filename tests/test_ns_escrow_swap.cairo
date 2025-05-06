@@ -419,7 +419,7 @@ fn test_deployment() {
 // }
 
 #[test]
-// #[should_panic(expected: 'invalid swap status')]
+#[should_panic(expected: 'invalid swap status')]
 fn test_withdraw_twice() {
     let (contract_address, payment_erc20) = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
@@ -483,24 +483,24 @@ fn test_withdraw_twice() {
     ]);
 }
 
-// #[test]
-// fn test_reverse_deposit_twice() {
-//     let (contract_address, _) = deploy_contract();
-//     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+#[test]
+fn test_reverse_deposit_twice() {
+    let (contract_address, _) = deploy_contract();
+    let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
-//     let mut spy = spy_events();
+    let mut spy = spy_events();
 
-//     // First reverse deposit
-//     contract_dispatcher.reverse_deposit();
+    // First reverse deposit
+    contract_dispatcher.reverse_deposit();
 
-//     // Try to reverse deposit again
-//     contract_dispatcher.reverse_deposit();
+    // Try to reverse deposit again
+    contract_dispatcher.reverse_deposit();
 
-//     spy.assert_emitted(@array![
-//         (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
-//             events::SwapCancelled { refund_amount: 1000_u256 }
-//         ))
-//     ]);
-// }
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
+            events::SwapCancelled { refund_amount: 1000_u256 }
+        ))
+    ]);
+}
 
 
