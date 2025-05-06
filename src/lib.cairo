@@ -34,7 +34,7 @@ pub trait INSEscrowSwapContract<TContractState> {
 #[starknet::contract]
 pub mod NSEscrowSwapContract {
     use openzeppelin_access::ownable::OwnableComponent;
-    use openzeppelin_token::erc20::interface::{IERC20CamelDispatcherTrait, IERC20CamelDispatcher};
+    use openzeppelin_token::erc20::interface::{IERC20DispatcherTrait, IERC20Dispatcher};
     use starknet::ContractAddress;
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
     use starknet::get_caller_address;
@@ -134,16 +134,13 @@ pub mod NSEscrowSwapContract {
 
             let amount_plus_fees = amount + get_fees(amount);
 
-            let payment_erc_20 = IERC20CamelDispatcher {
+            let payment_erc_20 = IERC20Dispatcher {
                 contract_address: self.payment_erc_20.read()
             };
             let caller = get_caller_address();
             let contract = get_contract_address();
-
-            if !payment_erc_20.approve(contract, amount_plus_fees) {
-                panic_with_felt252('approve failed');
-            }
-            if !payment_erc_20.transferFrom(caller, contract, amount_plus_fees) {
+            
+            if !payment_erc_20.transfer_from(caller, contract, amount_plus_fees) {
                 panic_with_felt252('insufficient payment allowance');
             }
 
@@ -192,10 +189,16 @@ pub mod NSEscrowSwapContract {
             assert(current_status == SwapStatus::CredentialsChanged, 'invalid swap status' );
 
             // TODO: Transfer tokens to seller
-            // self.erc20.transfer(self.seller.read(), self.amount.read());
-            // TEMPORARY
+            let payment_erc_20 = IERC20Dispatcher {
+                contract_address: self.payment_erc_20.read()
+            };
+            let seller = self.seller.read();
             let amount = self.amount.read();
-            self.amount.write(0);
+            if !payment_erc_20.transfer(seller, amount) {
+                panic_with_felt252('insufficient payment allowance');
+            }
+            // TEMPORARY
+            // self.amount.write(0);
             
             // set status to completed
             self.status.write(SwapStatus::Completed); 

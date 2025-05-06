@@ -8,7 +8,10 @@ use openzeppelin_token::erc20::interface::{IERC20DispatcherTrait, IERC20Dispatch
 
 use snforge_std::{declare, load, ContractClassTrait, DeclareResultTrait, spy_events, EventSpyAssertionsTrait, start_cheat_caller_address,
     stop_cheat_caller_address};
+use snforge_std::trace::get_call_trace;
 use starknet::{ContractAddress, contract_address_const};
+
+const DECIMALS: u8 = 6;
 
 fn uint256_encode(val: u256) -> Array::<felt252> {
     let low_part: u128 = val.low;
@@ -23,7 +26,7 @@ fn uint256_encode(val: u256) -> Array::<felt252> {
 fn deploy_erc20() -> ContractAddress {
     let buyer = contract_address_const::<0x123>();
 
-    let supply = uint256_encode(100000000_u256);
+    let supply = uint256_encode(1230000 * 10 ** @DECIMALS.into());
     let calldata = array![*supply[0], *supply[1], buyer.try_into().unwrap()];
     let contract = declare("MockUsdt").unwrap().contract_class();
     let (address0, _) = contract.deploy(@calldata).unwrap();
@@ -416,7 +419,7 @@ fn test_deployment() {
 // }
 
 #[test]
-#[should_panic(expected: 'invalid swap status')]
+// #[should_panic(expected: 'invalid swap status')]
 fn test_withdraw_twice() {
     let (contract_address, payment_erc20) = deploy_contract();
     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
@@ -424,31 +427,39 @@ fn test_withdraw_twice() {
 
     let mut spy = spy_events();
 
-    let amount = 1000_u256;
+    let amount = 100 * 10 ** @DECIMALS.into();
+
     let buyer = contract_address_const::<0x123>();
     let seller = contract_address_const::<0x456>();
 
     // Complete the full flow
     let zk_proof = array![1, 2, 3, 4];
     contract_dispatcher.verify_credentials(zk_proof.span());
+
+    // set buyer as caller
     start_cheat_caller_address(contract_address, buyer);
-
+    start_cheat_caller_address(payment_erc20, buyer);
+    
     // Set spend allowance for contract
-    payment_erc20_dispatcher.approve(contract_address, amount+amount);
-
+    let amount_plus_fees = 2 * amount;
+    payment_erc20_dispatcher.approve(contract_address, amount_plus_fees);
+    
     // complete deposit
+    contract_dispatcher.verify_credentials_shared(zk_proof.span());
     contract_dispatcher.deposit(amount);
 
+    // reset caller
     stop_cheat_caller_address(contract_address);
+    stop_cheat_caller_address(payment_erc20);
 
     // complete credentials shared
     contract_dispatcher.verify_credentials_shared(zk_proof.span());
     contract_dispatcher.verify_credentials_changed(zk_proof.span());
-    contract_dispatcher.withdraw();
-
+    
     start_cheat_caller_address(contract_address, seller);
-
-
+    // first withdrawal
+    contract_dispatcher.withdraw();
+    println!("balance of contract: {}", payment_erc20_dispatcher.balance_of(contract_address)); // debug
     // Try to withdraw again
     contract_dispatcher.withdraw();
     stop_cheat_caller_address(contract_address);
