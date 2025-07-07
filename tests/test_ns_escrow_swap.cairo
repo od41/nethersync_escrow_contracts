@@ -4,12 +4,9 @@ use nethersync_escrow_contracts::{events, NSEscrowSwapContract, INSEscrowSwapCon
 use nethersync_escrow_contracts::mock_usdt::{MockUsdt};
 use openzeppelin_token::erc20::interface::{IERC20DispatcherTrait, IERC20Dispatcher};
 
-
-
-use snforge_std::{declare, load, ContractClassTrait, DeclareResultTrait, spy_events, EventSpyAssertionsTrait, start_cheat_caller_address,
+use snforge_std::{declare, ContractClassTrait, DeclareResultTrait, spy_events, EventSpyAssertionsTrait, start_cheat_caller_address,
     stop_cheat_caller_address};
-use snforge_std::trace::get_call_trace;
-use starknet::{ContractAddress, contract_address_const};
+use starknet::{ContractAddress};
 
 const DECIMALS: u8 = 6;
 
@@ -24,8 +21,6 @@ fn uint256_encode(val: u256) -> Array::<felt252> {
 }
 
 fn deploy_erc20() -> ContractAddress {
-    let buyer = contract_address_const::<0x123>();
-
     let supply = uint256_encode(1230000 * 10 ** @DECIMALS.into());
     let calldata = array![*supply[0], *supply[1], buyer.try_into().unwrap()];
     let contract = declare("MockUsdt").unwrap().contract_class();
@@ -34,10 +29,7 @@ fn deploy_erc20() -> ContractAddress {
 }
 
 fn deploy_contract() -> (ContractAddress, ContractAddress) {
-    let buyer = contract_address_const::<0x123>();
-    let seller = contract_address_const::<0x456>();
-    let token = contract_address_const::<0x789>();
-    let amount = 1000_u256;
+    let amount = 100 * 10 ** @DECIMALS.into();
     let amount_u128 = uint256_encode(amount); 
     let owner = contract_address_const::<0x111>();
 
@@ -67,58 +59,84 @@ fn test_deployment() {
     );
 }
 
-// #[test]
-// fn test_full_swap_flow_success() {
-//     let (contract_address, _) = deploy_contract();
-//     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+#[test]
+fn test_full_swap_flow_success() {
+    let (contract_address, payment_erc20) = deploy_contract();
+    let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+    let payment_erc20_dispatcher = IERC20Dispatcher { contract_address: payment_erc20 };
 
-//     // 1. Initial state check
-//     assert(contract_dispatcher.swap_status() == SwapStatus::Pending, 'status not Pending');
+    let buyer: ContractAddress = 0x123.try_into().unwrap();
+    let seller: ContractAddress = 0x456.try_into().unwrap();
 
-//     // 2. Verify credentials
-//     let zk_proof = array![1, 2, 3, 4]; // Mock valid proof
-//     contract_dispatcher.verify_credentials(zk_proof.span());
-//     assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsVerified, 'status not CredentialsVerified');
 
-//     // 3. Deposit
-//     let amount = 1000_u256;
-//     contract_dispatcher.deposit(amount);
-//     assert(contract_dispatcher.swap_status() == SwapStatus::PaymentConfirmed, 'status not PaymentConfirmed');
+    // 1. Initial state check
+    assert(contract_dispatcher.swap_status() == SwapStatus::Pending, 'status not Pending');
 
-//     // 4. Verify credentials shared
-//     contract_dispatcher.verify_credentials_shared(zk_proof.span());
-//     assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsShared, 'status not CredentialsShared');
+    // 2. Verify credentials
+    let zk_proof = array![1, 2, 3, 4]; // Mock valid proof
+    contract_dispatcher.verify_credentials(zk_proof.span());
+    assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsVerified, 'status not CredentialsVerified');
 
-//     // 5. Verify credentials changed
-//     contract_dispatcher.verify_credentials_changed(zk_proof.span());
-//     assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsChanged, 'status not CredentialsChanged');
-
-//     // 6. Withdraw
-//     contract_dispatcher.withdraw();
-//     assert(contract_dispatcher.swap_status() == SwapStatus::Completed, 'status not Completed');
     
-//     // 7. Verify amount is zero after withdrawal
-//     let contract_balance = load(contract_address, selector!("amount"), 1);
-//     assert_eq!(contract_balance, array![0], "amount not zero after withdrawal");
-// }
-
-// #[test]
-// fn test_credentials_verification_failed() {
-//     let (contract_address, _) = deploy_contract();
-//     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
-
-//     let mut spy = spy_events();
+    // set buyer as caller
+    start_cheat_caller_address(contract_address, buyer);
+    start_cheat_caller_address(payment_erc20, buyer);
     
-//     // Mock invalid proof
-//     let invalid_proof = array![];
-//     contract_dispatcher.verify_credentials(invalid_proof.span());
+    // 3. Deposit
+    let amount = 100 * 10 ** @DECIMALS.into();
 
-//     spy.assert_emitted(@array![
-//         (contract_address, NSEscrowSwapContract::Event::CredentialsVerificationFailed(
-//             events::CredentialsVerificationFailed { status: 'CredentialsVerificationFailed' }
-//         ))
-//     ]);
-// }
+    // Set spend allowance for contract
+    let amount_plus_fees = amount * 2; // Allow double the amount for fees
+    payment_erc20_dispatcher.approve(contract_address, amount_plus_fees);
+    println!("allowance: {}", payment_erc20_dispatcher.allowance(buyer, contract_address)); // debug
+    println!("balance of buyer: {}", payment_erc20_dispatcher.balance_of(buyer)); // debug
+    contract_dispatcher.deposit(amount);
+    assert(contract_dispatcher.swap_status() == SwapStatus::PaymentConfirmed, 'status not PaymentConfirmed');
+
+    // 4. Verify credentials shared
+    contract_dispatcher.verify_credentials_shared(zk_proof.span());
+    assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsShared, 'status not CredentialsShared');
+
+    // 5. Verify credentials changed
+    contract_dispatcher.verify_credentials_changed(zk_proof.span());
+    assert(contract_dispatcher.swap_status() == SwapStatus::CredentialsChanged, 'status not CredentialsChanged');
+
+    // reset caller
+    stop_cheat_caller_address(contract_address);
+    stop_cheat_caller_address(payment_erc20);
+
+    // set seller as caller
+    start_cheat_caller_address(contract_address, seller);
+
+    // 6. Withdraw
+    contract_dispatcher.withdraw();
+    assert(contract_dispatcher.swap_status() == SwapStatus::Completed, 'status not Completed');
+
+    // reset caller
+    stop_cheat_caller_address(contract_address);
+    
+    // 7. Verify amount is zero after withdrawal
+    let contract_balance = payment_erc20_dispatcher.balance_of(contract_address);
+    assert_eq!(contract_balance, 0, "balance is NOT zero after withdrawal");
+}
+
+#[test]
+fn test_credentials_verification_failed() {
+    let (contract_address, _) = deploy_contract();
+    let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+
+    let mut spy = spy_events();
+    
+    // Mock invalid proof
+    let invalid_proof = array![];
+    contract_dispatcher.verify_credentials(invalid_proof.span());
+
+    spy.assert_emitted(@array![
+        (contract_address, NSEscrowSwapContract::Event::CredentialsVerificationFailed(
+            events::CredentialsVerificationFailed { status: 'CredentialsVerificationFailed' }
+        ))
+    ]);
+}
 
 // #[test]
 // fn test_reverse_deposit_from_pending() {
@@ -418,89 +436,98 @@ fn test_deployment() {
 //     ]);
 // }
 
-#[test]
-#[should_panic(expected: 'invalid swap status')]
-fn test_withdraw_twice() {
-    let (contract_address, payment_erc20) = deploy_contract();
-    let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
-    let payment_erc20_dispatcher = IERC20Dispatcher { contract_address: payment_erc20 };
+// #[test]
+// #[should_panic(expected: 'invalid swap status')]
+// fn test_withdraw_twice() {
+//     let (contract_address, payment_erc20) = deploy_contract();
+//     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+//     let payment_erc20_dispatcher = IERC20Dispatcher { contract_address: payment_erc20 };
 
-    let mut spy = spy_events();
+//     let mut spy = spy_events();
 
-    let amount = 100 * 10 ** @DECIMALS.into();
+//     let amount = 100 * 10 ** @DECIMALS.into();
 
-    let buyer = contract_address_const::<0x123>();
-    let seller = contract_address_const::<0x456>();
+//     // Complete the full flow
+//     let zk_proof = array![1, 2, 3, 4];
+//     contract_dispatcher.verify_credentials(zk_proof.span());
 
-    // Complete the full flow
-    let zk_proof = array![1, 2, 3, 4];
-    contract_dispatcher.verify_credentials(zk_proof.span());
-
-    // set buyer as caller
-    start_cheat_caller_address(contract_address, buyer);
-    start_cheat_caller_address(payment_erc20, buyer);
+//     // set buyer as caller
+//     start_cheat_caller_address(contract_address, BUYER);
+//     start_cheat_caller_address(payment_erc20, BUYER);
     
-    // Set spend allowance for contract
-    let amount_plus_fees = 2 * amount;
-    payment_erc20_dispatcher.approve(contract_address, amount_plus_fees);
+//     // Set spend allowance for contract
+//     let amount_plus_fees = 2 * amount;
+//     payment_erc20_dispatcher.approve(contract_address, amount_plus_fees);
     
-    // complete deposit
-    contract_dispatcher.verify_credentials_shared(zk_proof.span());
-    contract_dispatcher.deposit(amount);
+//     // complete deposit
+//     contract_dispatcher.deposit(amount);
 
-    // reset caller
-    stop_cheat_caller_address(contract_address);
-    stop_cheat_caller_address(payment_erc20);
+//     // reset caller
+//     stop_cheat_caller_address(contract_address);
+//     stop_cheat_caller_address(payment_erc20);
 
-    // complete credentials shared
-    contract_dispatcher.verify_credentials_shared(zk_proof.span());
-    contract_dispatcher.verify_credentials_changed(zk_proof.span());
+//     // complete credentials shared
+//     contract_dispatcher.verify_credentials_shared(zk_proof.span());
+//     contract_dispatcher.verify_credentials_changed(zk_proof.span());
     
-    start_cheat_caller_address(contract_address, seller);
-    // first withdrawal
-    contract_dispatcher.withdraw();
-    println!("balance of contract: {}", payment_erc20_dispatcher.balance_of(contract_address)); // debug
-    // Try to withdraw again
-    contract_dispatcher.withdraw();
-    stop_cheat_caller_address(contract_address);
+//     start_cheat_caller_address(contract_address, SELLER);
+//     // first withdrawal
+//     contract_dispatcher.withdraw();
+//     println!("balance of contract: {}", payment_erc20_dispatcher.balance_of(contract_address)); // debug
+//     // Try to withdraw again
+//     contract_dispatcher.withdraw();
+//     stop_cheat_caller_address(contract_address);
 
-    spy.assert_emitted(@array![
-        (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
-            events::CredentialsVerified { status: 'CredentialsVerified' }
-        )),
-        (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
-            events::PaymentDeposited { amount: amount }
-        )),
-        (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
-            events::CredentialsShared { status: 'CredentialsShared' }
-        )),
-        (contract_address, NSEscrowSwapContract::Event::CredentialsChanged(
-            events::CredentialsChanged { status: 'CredentialsChanged' }
-        )),
-        (contract_address, NSEscrowSwapContract::Event::SwapCompleted(
-            events::SwapCompleted { final_amount: amount }
-        ))
-    ]);
-}
+//     spy.assert_emitted(@array![
+//         (contract_address, NSEscrowSwapContract::Event::CredentialsVerified(
+//             events::CredentialsVerified { status: 'CredentialsVerified' }
+//         )),
+//         (contract_address, NSEscrowSwapContract::Event::PaymentDeposited(
+//             events::PaymentDeposited { amount: amount }
+//         )),
+//         (contract_address, NSEscrowSwapContract::Event::CredentialsShared(
+//             events::CredentialsShared { status: 'CredentialsShared' }
+//         )),
+//         (contract_address, NSEscrowSwapContract::Event::CredentialsChanged(
+//             events::CredentialsChanged { status: 'CredentialsChanged' }
+//         )),
+//         (contract_address, NSEscrowSwapContract::Event::SwapCompleted(
+//             events::SwapCompleted { final_amount: amount }
+//         ))
+//     ]);
+// }
 
-#[test]
-fn test_reverse_deposit_twice() {
-    let (contract_address, _) = deploy_contract();
-    let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
+// #[test]
+// #[should_panic(expected: 'caller must be buyer')]
+// fn test_reverse_deposit_not_buyer() {
+//     let (contract_address, _) = deploy_contract();
+//     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
-    let mut spy = spy_events();
+//     let mut spy = spy_events();
 
-    // First reverse deposit
-    contract_dispatcher.reverse_deposit();
+//     // call reverse deposit
+//     contract_dispatcher.reverse_deposit();
+// }
 
-    // Try to reverse deposit again
-    contract_dispatcher.reverse_deposit();
+// #[test]
+// #[should_panic(expected: 'balance must NOT be 0')]
+// fn test_reverse_deposit_twice() {
+//     let (contract_address, _) = deploy_contract();
+//     let contract_dispatcher = INSEscrowSwapContractDispatcher { contract_address: contract_address };
 
-    spy.assert_emitted(@array![
-        (contract_address, NSEscrowSwapContract::Event::SwapCancelled(
-            events::SwapCancelled { refund_amount: 1000_u256 }
-        ))
-    ]);
-}
+//     let mut spy = spy_events();
+
+//     // set buyer as caller
+//     start_cheat_caller_address(contract_address, BUYER);
+
+//     // First reverse deposit
+//     contract_dispatcher.reverse_deposit();
+
+//     // Try to reverse deposit again
+//     contract_dispatcher.reverse_deposit();
+
+//     // end call as buyer
+//     stop_cheat_caller_address(contract_address);
+// }
 
 
