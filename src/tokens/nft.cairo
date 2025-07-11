@@ -1,5 +1,13 @@
+use starknet::ContractAddress;
+
+
+#[starknet::interface]
+pub trait INSNFT<TContractState> {
+    fn mint(ref self: TContractState, recipient: ContractAddress, token_id: u256);
+}
+
 #[starknet::contract]
-mod NSNFT {
+pub mod NSNFT {
     use openzeppelin_introspection::src5::SRC5Component;
     use openzeppelin_token::erc721::{ERC721Component, ERC721HooksEmptyImpl};
     use starknet::ContractAddress;
@@ -32,14 +40,21 @@ mod NSNFT {
     #[constructor]
     fn constructor(
         ref self: ContractState,
-        recipient: ContractAddress
+        minter: ContractAddress
     ) {
-        let name = "MyNFT";
-        let symbol = "NFT";
-        let base_uri = "https://api.example.com/v1/";
-        let token_id = 1;
+        let name = "Nethersync NFT";
+        let symbol = "NSNFT";
+        let base_uri = "https://nft.nethersync.com/v1/"; // update this
+        // let token_id = 1;
 
         self.erc721.initializer(name, symbol, base_uri);
-        self.erc721.mint(recipient, token_id);
+        // self.erc721.mint(recipient, token_id);
+    }
+
+    #[abi(embed_v0)]
+    impl NSNFTImpl of super::INSNFT<ContractState> {
+        fn mint(ref self: ContractState, recipient: ContractAddress, token_id: u256) {
+            self.erc721.mint(recipient, token_id);
+        }
     }
 }
