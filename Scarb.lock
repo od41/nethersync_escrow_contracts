@@ -6,6 +6,7 @@ name = "nethersync_escrow_contracts"
 version = "0.1.0"
 dependencies = [
  "openzeppelin_access",
+ "openzeppelin_introspection",
  "openzeppelin_token",
  "snforge_std",
 ]

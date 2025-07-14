@@ -1,7 +1,9 @@
 #[starknet::contract]
 pub mod MockUsdt {
     use openzeppelin_token::erc20::{ERC20Component, ERC20HooksEmptyImpl};
+    use openzeppelin_token::erc20::interface;
     use starknet::ContractAddress;
+    use starknet::storage::StoragePointerReadAccess;
 
     component!(path: ERC20Component, storage: erc20, event: ERC20Event);
 
@@ -34,5 +36,19 @@ pub mod MockUsdt {
 
         self.erc20.initializer(name, symbol);
         self.erc20.mint(recipient, fixed_supply);
+    }
+
+    impl ERC20MetadataImpl of interface::IERC20Metadata<ContractState> {
+        fn decimals(self: @ContractState) -> u8 {
+            6
+        }
+
+        fn name(self: @ContractState) -> ByteArray {
+            self.erc20.ERC20_name.read()
+        }
+        
+        fn symbol(self: @ContractState) -> ByteArray {
+            self.erc20.ERC20_symbol.read()
+        }
     }
 }
